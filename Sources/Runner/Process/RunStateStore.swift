@@ -27,7 +27,7 @@ final class RunStateStore {
     }
 
     nonisolated static var defaultFileURL: URL {
-        ConfigStore.defaultFileURL.deletingLastPathComponent().appendingPathComponent("state.json")
+        ConfigStore.supportDirectory.appendingPathComponent("state.json")
     }
 
     func record(for id: UUID) -> Record? {

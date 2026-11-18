@@ -108,6 +108,8 @@ final class AppRunner: Identifiable {
             }
         } catch {
             status = .failed(error.localizedDescription)
+            // Chybu zapíšeme i do logu, aby byla dohledatelná vedle výstupu aplikace
+            try? LogFile.append("===== Spuštění selhalo: \(error.localizedDescription) =====\n", to: logURL)
         }
     }
 
@@ -121,6 +123,7 @@ final class AppRunner: Identifiable {
               abs(info.startTime - record.startTime) < 0.001,
               info.pgid == record.pid else {
             stateStore.remove(id: id)
+            LaunchdJob.remove(LaunchdJob.label(for: id))
             return false
         }
 
@@ -139,7 +142,7 @@ final class AppRunner: Identifiable {
 
     // Začne hlídat konec procesu; handler běží na hlavní frontě
     private func watchExit(pid watchedPID: pid_t) {
-        exitSource = ProcessSpawner.watchExit(pid: watchedPID) { [weak self] reason in
+        exitSource = ProcessSpawner.watchExit(pid: watchedPID, label: LaunchdJob.label(for: id)) { [weak self] reason in
             MainActor.assumeIsolated {
                 self?.handleExit(pid: watchedPID, reason: reason)
             }
@@ -199,7 +202,7 @@ final class AppRunner: Identifiable {
     }
 
     // Zpracování konce procesu spuštěného nebo převzatého Runnerem.
-    // reason je nil u převzatého procesu – návratový kód cizího procesu systém neprozradí.
+    // reason je nil, pokud důvod nejde zjistit (proces spuštěný starší verzí Runneru).
     private func handleExit(pid exitedPID: pid_t, reason: ExitReason?) {
         guard pid == exitedPID else { return }
         let wasStopRequested = status == .stopping
@@ -230,7 +233,7 @@ final class AppRunner: Identifiable {
         }
 
         if let logURL = activeLogURL {
-            try? LogFile.append("===== Konec: \(Self.describe(reason)) =====\n", to: logURL)
+            try? LogFile.append("===== Konec: \(reason?.description ?? "důvod není znám") =====\n", to: logURL)
         }
         startIfRestartPending()
     }
@@ -268,15 +271,6 @@ final class AppRunner: Identifiable {
             self.portOpen = false
             self.status = .stopped
             self.startIfRestartPending()
-        }
-    }
-
-    // Lidsky čitelný popis důvodu ukončení pro zápis do logu
-    private static func describe(_ reason: ExitReason?) -> String {
-        switch reason {
-        case .exited(let code): "kód \(code)"
-        case .signaled(let signal): "signál \(signal)"
-        case nil: "převzatá aplikace skončila"
         }
     }
 }

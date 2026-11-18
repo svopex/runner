@@ -11,9 +11,21 @@ final class RunnerTests: XCTestCase {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("RunnerTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        // Testy nesmí sahat na skutečný spouštěč v ~/Library/LaunchAgents –
+        // každý test má vlastní v dočasné složce
+        let launcherDir = tempDir.appendingPathComponent("launcher", isDirectory: true)
+        Launcher.current = Launcher(
+            label: "local.runner.launcher.test.\(UUID().uuidString)",
+            directory: launcherDir,
+            plistURL: launcherDir.appendingPathComponent("launcher.plist"),
+            logURL: launcherDir.appendingPathComponent("launcher.log")
+        )
     }
 
     override func tearDownWithError() throws {
+        LaunchdJob.bootout(Launcher.current.label)
+        Launcher.current = .standard
         try? FileManager.default.removeItem(at: tempDir)
     }
 
@@ -52,10 +64,11 @@ final class RunnerTests: XCTestCase {
 
     // MARK: - Model
 
-    func testExitReasonDecoding() {
-        XCTAssertEqual(ExitReason(rawStatus: 0), .exited(0))
-        XCTAssertEqual(ExitReason(rawStatus: 3 << 8), .exited(3))
-        XCTAssertEqual(ExitReason(rawStatus: SIGTERM), .signaled(SIGTERM))
+    func testLaunchctlStatusParsing() {
+        let running = LaunchdJob.parseStatus("gui/501/x = {\n\tstate = running\n\tpid = 123\n\tlast exit code = (never exited)\n\t\tpid = 999\n}")
+        XCTAssertEqual(running, LaunchdJob.Status(pid: 123, lastExit: nil))
+        XCTAssertEqual(LaunchdJob.parseStatus("\tlast exit code = 3\n").lastExit, .exited(3))
+        XCTAssertEqual(LaunchdJob.parseStatus("\tlast terminating signal = Terminated: 15\n").lastExit, .signaled(15))
     }
 
     func testDefinitionDecodingUsesDefaults() throws {
@@ -123,13 +136,13 @@ final class RunnerTests: XCTestCase {
 
     // Skript běží ve své složce, dostane parametry a výstup jde do logu
     func testSpawnWritesOutputToLogAndExits() throws {
-        let app = try makeApp(script: #"echo "cwd=$(pwd) args=$*"; exit 3"#, arguments: "--a 1")
+        let app = try makeApp(script: #"echo "cwd=$(pwd) args=$*"; sleep 1; exit 3"#, arguments: "--a 1")
         let logURL = tempDir.appendingPathComponent("out.log")
         let pid = try ProcessSpawner.spawn(app: app, logURL: logURL)
 
         let exited = expectation(description: "exit")
         nonisolated(unsafe) var reason: ExitReason?
-        let source = ProcessSpawner.watchExit(pid: pid) { reason = $0; exited.fulfill() }
+        let source = ProcessSpawner.watchExit(pid: pid, label: LaunchdJob.label(for: app.id)) { reason = $0; exited.fulfill() }
         wait(for: [exited], timeout: 15)
         source.cancel()
 
@@ -150,7 +163,7 @@ final class RunnerTests: XCTestCase {
         let childPID = pid_t(try String(contentsOf: markerURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
 
         let exited = expectation(description: "exit")
-        let source = ProcessSpawner.watchExit(pid: pid) { _ in exited.fulfill() }
+        let source = ProcessSpawner.watchExit(pid: pid, label: LaunchdJob.label(for: app.id)) { _ in exited.fulfill() }
         XCTAssertTrue(ProcessSpawner.signalGroup(pid, SIGTERM))
         wait(for: [exited], timeout: 10)
         source.cancel()
@@ -159,23 +172,31 @@ final class RunnerTests: XCTestCase {
         XCTAssertTrue(waitUntil(timeout: 5) { kill(childPID, 0) != 0 })
     }
 
-    // Spuštěná aplikace musí být „odpovědným procesem“ sama za sebe, jinak ji macOS
-    // ukončí spolu s Runnerem (Dock → Ukončit práci na pozadí, vynucené ukončení)
-    func testSpawnedProcessIsResponsibleForItself() throws {
-        typealias ResponsibleFunction = @convention(c) (pid_t) -> pid_t
-        let responsiblePID = try XCTUnwrap(
-            ProcessSpawner.systemSymbol("responsibility_get_pid_responsible_for_pid", as: ResponsibleFunction.self),
-            "Systém neposkytuje responsibility_get_pid_responsible_for_pid"
-        )
+    // Aplikace musí běžet ve vlastní coalition, jinak ji macOS ukončí spolu
+    // s Runnerem (Dock → Ukončit práci na pozadí, vynucené ukončení Runneru)
+    func testSpawnedProcessHasOwnCoalition() throws {
+        // proc_pidinfo flavor PROC_PIDCOALITIONINFO = 20: id resource a jetsam coalition + rezerva
+        func coalitionIDs(_ pid: pid_t) -> [UInt64] {
+            var info = [UInt64](repeating: 0, count: 5)
+            let size = Int32(info.count * MemoryLayout<UInt64>.size)
+            return proc_pidinfo(pid, 20, 0, &info, size) == size ? Array(info.prefix(2)) : []
+        }
 
         let app = try makeApp(script: "sleep 30")
+        let label = LaunchdJob.label(for: app.id)
         let pid = try ProcessSpawner.spawn(app: app, logURL: tempDir.appendingPathComponent("out.log"))
         defer {
             ProcessSpawner.signalGroup(pid, SIGKILL)
-            waitpid(pid, nil, 0)
+            LaunchdJob.remove(label)
         }
 
-        XCTAssertEqual(responsiblePID(pid), pid)
+        let own = coalitionIDs(getpid())
+        let child = coalitionIDs(pid)
+        XCTAssertEqual(own.count, 2)
+        XCTAssertEqual(child.count, 2)
+        XCTAssertNotEqual(child, own)
+        // Rodičem je launchd, ne Runner
+        XCTAssertEqual(ProcessInspector.info(pid: pid)?.ppid, 1)
     }
 
     // Celý životní cyklus přes AppRunner: start → běží → stop → zastaveno
@@ -213,15 +234,54 @@ final class RunnerTests: XCTestCase {
     // Nečekaný konec s nenulovým kódem se zobrazí jako chyba
     @MainActor
     func testRunnerReportsCrash() async throws {
-        let app = try makeApp(script: "exit 7")
+        let app = try makeApp(script: "sleep 1; exit 7")
         let runner = AppRunner(definition: app, stateStore: makeStateStore())
         runner.start()
+        XCTAssertNotNil(runner.pid)
         try await waitUntilStopped(runner)
         guard case .failed(let message) = runner.status else {
             return XCTFail("Očekáván stav failed, je \(runner.status)")
         }
         XCTAssertTrue(message.contains("7"))
+
+        // launchd do logu připisuje – hlavička startu i záznam o konci musí zůstat
+        let log = try String(contentsOf: runner.logURL, encoding: .utf8)
+        XCTAssertTrue(log.contains("===== Start"), log)
+        XCTAssertTrue(log.contains("===== Konec: kód 7 ====="), log)
         try? FileManager.default.removeItem(at: runner.logURL)
+    }
+
+    // MARK: - Spouštěč
+
+    // Spouštěč se nainstaluje, spustí a po ukončení ho launchd obnoví (KeepAlive)
+    func testLauncherInstallsAndRestarts() throws {
+        let launcher = Launcher.current
+        XCTAssertFalse(launcher.isRunning)
+        XCTAssertEqual(try launcher.ensureRunning(), .bootstrapped)
+        XCTAssertTrue(launcher.isRunning)
+
+        // Druhé volání nic nemění
+        let firstPID = LaunchdJob.status(launcher.label)?.pid
+        XCTAssertNotNil(firstPID)
+        XCTAssertEqual(try launcher.ensureRunning(), .alreadyRunning)
+        XCTAssertEqual(LaunchdJob.status(launcher.label)?.pid, firstPID)
+
+        // Změněný skript se přepíše a načtená úloha se jen restartuje (bez nového
+        // načtení do launchd, které by změnilo, komu je úloha připsaná)
+        try "# stará verze".write(to: launcher.scriptURL, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try launcher.ensureRunning(), .restarted)
+        XCTAssertTrue(launcher.isRunning)
+        XCTAssertNotEqual(LaunchdJob.status(launcher.label)?.pid, firstPID)
+    }
+
+    // Požadavek na plist mimo složku jobs spouštěč odmítne (zapíše do svého logu)
+    func testLauncherRejectsForeignPlist() throws {
+        let launcher = Launcher.current
+        try launcher.ensureRunning()
+        try launcher.submit(jobPlistURL: URL(fileURLWithPath: "/tmp/cizi.plist"))
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            ((try? String(contentsOf: launcher.logURL, encoding: .utf8)) ?? "").contains("odmítnut požadavek: /tmp/cizi.plist")
+        })
     }
 
     // MARK: - Převzetí po restartu Runneru
@@ -272,6 +332,22 @@ final class RunnerTests: XCTestCase {
         XCTAssertFalse(runner.adopt(record))
         XCTAssertNil(runner.pid)
         XCTAssertNil(store.record(for: app.id))
+    }
+
+    // Skript, který skončí dřív, než ho Runner stihne zachytit (nebo těsně po tom),
+    // musí v obou případech skončit stavem „chyba“ s návratovým kódem
+    @MainActor
+    func testRunnerReportsImmediateExit() async throws {
+        let app = try makeApp(script: "exit 9")
+        let runner = AppRunner(definition: app, stateStore: makeStateStore())
+        runner.start()
+        try await waitUntilStopped(runner)
+        guard case .failed(let message) = runner.status else {
+            return XCTFail("Očekáván stav failed, je \(runner.status)")
+        }
+        XCTAssertTrue(message.contains("9"), message)
+        XCTAssertNil(LaunchdJob.status(LaunchdJob.label(for: app.id)))
+        try? FileManager.default.removeItem(at: runner.logURL)
     }
 
     // MARK: - Porty

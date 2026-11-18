@@ -27,7 +27,7 @@ aplikace. Seznam aplikací je konfigurovatelný a lze přidávat další.
 Požadavky: macOS 14+, Swift 5.10+ (Xcode nebo Command Line Tools).
 
 ```bash
-./run.sh              # sestaví, nainstaluje do /Applications a spustí (Runner musí být ukončený)
+./run.sh              # sestaví, nainstaluje do /Applications, načte spouštěč a spustí Runner
 ./run.sh --no-install # jen sestaví build/Runner.app
 ```
 
@@ -86,8 +86,7 @@ PID, dobu běhu i log a zastavuje celou skupinu procesů jako u vlastního spuš
 
 Převezme se jen proces, který stále běží, má stejný čas startu (ochrana proti znovupoužitému
 PID) a je vedoucím své skupiny procesů. Neplatné záznamy (např. po restartu Macu) se zahodí.
-U převzaté aplikace nelze zjistit návratový kód – nečekaný konec se zobrazí jako chyba
-„Aplikace neočekávaně skončila“.
+Návratový kód převzaté aplikace se zjistí od launchd stejně jako u běžného spuštění.
 
 ## Nastavení
 
@@ -101,19 +100,50 @@ U převzaté aplikace nelze zjistit návratový kód – nečekaný konec se zob
 - Skript se spouští přes login shell `/bin/zsh -l -c 'cd … && exec ./run.sh …'`, aby měl
   stejný `PATH` jako v Terminálu (Python z Homebrew). `PATH` se navíc doplní
   o `/opt/homebrew/bin` a `/usr/local/bin`; nastaví se `PYTHONUNBUFFERED=1`.
-- Každá aplikace běží ve vlastní skupině procesů (`posix_spawn` + `POSIX_SPAWN_SETPGROUP`).
-  Zastavení posílá SIGTERM celé skupině, takže skončí i podřízené procesy.
-- Aplikace se spouští se zřeknutím odpovědnosti (`responsibility_spawnattrs_setdisclaim`,
-  stejně jako u Terminálu). macOS je tak nepřipisuje Runneru: po ukončení Runneru s volbou
-  „Nechat běžet“ se v Docku neobjeví jako jeho práce na pozadí a volba „Ukončit práci
-  na pozadí“ ani vynucené ukončení Runneru je neukončí.
-- Výstup (stdout i stderr) jde přímo do `~/Library/Logs/Runner/<název>_<id>.log`.
+- Každá aplikace běží jako samostatná **launchd úloha** v doméně `gui/<uid>`
+  (plist v `~/Library/Application Support/Runner/jobs/`, bez KeepAlive, při přihlášení se
+  nenačítá). Rodičem aplikace je launchd, ne Runner, a má vlastní „coalition“.
+- Úlohy do launchd nenačítá Runner, ale **spouštěč** – viz kapitola níže.
+- launchd spouští úlohu jako vedoucího nové skupiny procesů (PGID = PID). Zastavení posílá
+  SIGTERM celé skupině, takže skončí i podřízené procesy; po skončení se úloha z launchd odebere.
+- Výstup (stdout i stderr) jde přímo do `~/Library/Logs/Runner/<název>_<id>.log` (launchd připisuje).
   Aplikace tak může běžet dál i po ukončení Runneru. Log se při velikosti nad 5 MB
   při dalším startu odsune do `.log.1`.
 - Porty se kontrolují každé 2 s připojením na `127.0.0.1:<port>`. Aplikace „mimo Runner“
   se zastavují podle PID z `lsof`.
-- Konec procesů hlídá kqueue (`DispatchSource.makeProcessSource`), které funguje pro vlastní
-  i převzaté procesy. U vlastních procesů pak `waitpid()` zjistí návratový kód.
+- Konec procesů hlídá kqueue (`DispatchSource.makeProcessSource`); návratový kód nebo signál
+  se zjistí z `launchctl print` (funguje i pro aplikace převzaté po restartu Runneru).
+
+## Spouštěč a „práce na pozadí“ v Docku
+
+Když se ukončí aplikace s ikonou v Docku a zůstanou po ní procesy, macOS ji v Docku nechá
+jako „běžící na pozadí“. Jakmile ji tam uživatel ukončí, systém zastaví vše, co aplikaci
+připisuje:
+
+- procesy v její „coalition“ (všichni potomci, i s vlastní skupinou procesů),
+- launchd úlohy, které do launchd načetla – a to i nepřímo přes pomocnou úlohu.
+
+Aby aplikace spuštěné Runnerem opravdu běžely nezávisle, načítá jejich úlohy do launchd
+**spouštěč**: malý trvalý launchd agent `local.runner.launcher`.
+
+- Plist: `~/Library/LaunchAgents/local.runner.launcher.plist` (při přihlášení ho načte sám
+  launchd, takže nepatří žádné aplikaci). Skript: `~/Library/Application Support/Runner/launcher.sh`.
+- Runner mu přes pojmenovanou rouru `launcher.fifo` pošle cestu k plistu úlohy; spouštěč
+  přijímá jen plisty ze složky `jobs/` a volá `launchctl bootstrap`.
+- Chyby spouštěče jsou v `~/Library/Logs/Runner/launcher.log`.
+- Instaluje ho `./run.sh` (`Runner --install-launcher`). macOS při první instalaci ukáže
+  oznámení, že se na pozadí může spouštět položka „bash“ – to je spouštěč.
+
+**Po první instalaci se jednou odhlaste a přihlaste.** Do té doby je spouštěč připsaný
+aplikaci, ze které jste spustili `./run.sh` (např. Terminálu): aplikace by zastavilo ukončení
+práce na pozadí této aplikace. Po přihlášení ho načte launchd a nepatří nikomu.
+
+Další spuštění `./run.sh` už načtený spouštěč do launchd znovu nenačítají – při změně skriptu
+ho jen restartují (`launchctl kickstart -k`), což nemění, komu je připsaný. Výjimkou je změna
+jeho plistu při upgradu; pak je potřeba se znovu odhlásit a přihlásit.
+
+Pokud spouštěč neběží (instalace bez `run.sh`, ruční odebrání), načte ho Runner sám a v hlavním
+okně na to upozorní: úlohy jsou pak až do příštího přihlášení připsané Runneru.
 
 ## Ikona
 
@@ -128,7 +158,7 @@ swift scripts/make-icon.swift   # vytvoří Resources/AppIcon.icns a náhled bui
 
 ```
 Package.swift                 Swift balíček (cíl Runner + testy)
-run.sh                        sestavení Runner.app, instalace do /Applications a spuštění
+run.sh                        sestavení Runner.app, instalace, načtení spouštěče a spuštění
 scripts/make-icon.swift       generátor ikony aplikace
 Resources/Info.plist          Info.plist balíčku (LSUIElement – aplikace v horní liště)
 Resources/AppIcon.icns        ikona aplikace
@@ -139,7 +169,9 @@ Sources/Runner/
     ConfigStore.swift         načítání a ukládání apps.json, výchozí aplikace
     AppSettings.swift         uživatelské nastavení (UserDefaults)
   Process/
-    ProcessSpawner.swift      posix_spawn, čekání na konec, signály skupině
+    ProcessSpawner.swift      spuštění aplikace, sledování konce, signály skupině
+    LaunchdJob.swift          launchd úlohy: spuštění, stav (launchctl print), odebrání
+    Launcher.swift            spouštěč: launchd agent načítající úlohy místo Runneru
     AppRunner.swift           stav a řízení jedné aplikace
     RunnerManager.swift       správa všech aplikací, kontrola portů, převzetí, hromadné akce
     RunStateStore.swift       state.json – záznamy o spuštěných procesech pro převzetí
@@ -148,6 +180,7 @@ Sources/Runner/
     LogFile.swift             logy: příprava, rotace, čtení konce, čištění ANSI
   Support/LoginItem.swift     spouštění po přihlášení (SMAppService)
   Support/JSONFile.swift      společné čtení a zápis JSON (apps.json, state.json)
+  Support/Shell.swift         spouštění externích nástrojů, čekání na stav, společná chyba
   Views/                      SwiftUI pohledy (okno, řádek, log, editor, nastavení, menu)
 Tests/RunnerTests/            testy jádra (konfigurace, procesy, převzetí, porty, logy)
 ```

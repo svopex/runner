@@ -10,6 +10,8 @@ enum ProcessInspector {
         let startTime: TimeInterval
         // Skupina procesů – u aplikací spuštěných Runnerem je rovna PID
         let pgid: pid_t
+        // Rodičovský proces (u aplikací spuštěných Runnerem je to launchd, PID 1)
+        let ppid: pid_t
     }
 
     // Vrací informace o živém procesu, nebo nil (neexistuje nebo je to zombie)
@@ -30,7 +32,8 @@ enum ProcessInspector {
         let start = process.kp_proc.p_un.__p_starttime
         return Info(
             startTime: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000,
-            pgid: process.kp_eproc.e_pgid
+            pgid: process.kp_eproc.e_pgid,
+            ppid: process.kp_eproc.e_ppid
         )
     }
 }

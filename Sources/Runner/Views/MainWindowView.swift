@@ -30,6 +30,15 @@ struct MainWindowView: View {
                     .background(.red)
             }
 
+            // Upozornění, že spouštěč neběží v plně nezávislém režimu
+            if let notice = manager.launcherNotice {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.25))
+            }
+
             VSplitView {
                 appList
                     .frame(minHeight: 180)

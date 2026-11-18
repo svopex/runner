@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sestaví Runner.app do složky build/, nainstaluje ji do /Applications a spustí.
+# Sestaví Runner.app do složky build/, nainstaluje ji do /Applications, načte spouštěč a spustí ji.
 # Použití:
-#   ./run.sh              sestavení, instalace do /Applications a spuštění (Runner musí být ukončený)
+#   ./run.sh              sestavení, instalace, načtení spouštěče a spuštění (Runner musí být ukončený)
 #   ./run.sh --no-install jen sestavení do build/Runner.app
 set -euo pipefail
 
@@ -48,6 +48,11 @@ if [ "$INSTALL" -eq 1 ]; then
     rm -rf /Applications/Runner.app
     ditto "$APP_DIR" /Applications/Runner.app
     echo "Nainstalováno do /Applications/Runner.app"
+
+    # Spouštěč (launchd agent) načítáme odsud, ne z aplikace Runner: úlohy aplikací
+    # pak macOS nepřipisuje Runneru a nezastaví je při ukončení jeho práce na pozadí
+    /Applications/Runner.app/Contents/MacOS/Runner --install-launcher
+
     open /Applications/Runner.app
     echo "Runner spuštěn."
 fi

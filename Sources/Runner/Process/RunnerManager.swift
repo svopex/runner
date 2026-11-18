@@ -12,6 +12,8 @@ final class RunnerManager {
     private(set) var runners: [AppRunner] = []
     // Požadavek na zobrazení nastavení (lze vyvolat i z menu v horní liště)
     var showSettings = false
+    // Upozornění na stav spouštěče, zobrazuje se v hlavním okně
+    var launcherNotice: String?
 
     // Interval kontroly portů v sekundách
     private let pollInterval: TimeInterval = 2

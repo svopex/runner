@@ -31,24 +31,11 @@ enum PortProbe {
     // mimo Runner (např. ručně z Terminálu nebo před restartem Runneru).
     // Používá systémový lsof: -t jen PID, -sTCP:LISTEN jen naslouchající sokety.
     static func listeningPIDs(port: Int) -> [pid_t] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-        } catch {
-            return []
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let result = Shell.run("/usr/sbin/lsof", ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"])
 
         // Výstup je jeden PID na řádek; vlastní proces Runneru nikdy nezabíjíme
         let ownPID = getpid()
-        return String(decoding: data, as: UTF8.self)
+        return result.output
             .split(whereSeparator: \.isNewline)
             .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
             .filter { $0 != ownPID }

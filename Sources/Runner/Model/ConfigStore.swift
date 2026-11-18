@@ -23,11 +23,14 @@ final class ConfigStore {
         load()
     }
 
-    nonisolated static var defaultFileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base
+    // Složka s daty Runneru (konfigurace, stav, spouštěč, plisty úloh)
+    nonisolated static var supportDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Runner", isDirectory: true)
-            .appendingPathComponent("apps.json")
+    }
+
+    nonisolated static var defaultFileURL: URL {
+        supportDirectory.appendingPathComponent("apps.json")
     }
 
     // Načte konfiguraci ze souboru
