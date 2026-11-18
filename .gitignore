@@ -1,0 +1,5 @@
+# Výstupy sestavení Swift Package Manageru a run.sh
+.build/
+.swiftpm/
+build/
+.DS_Store
