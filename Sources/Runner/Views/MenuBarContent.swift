@@ -37,6 +37,7 @@ struct MenuBarContent: View {
 
         Button("Spustit vše") { manager.startAll() }
         Button("Zastavit vše") { manager.stopAll() }
+        Button("Restartovat vše") { manager.restartAll() }
 
         Divider()
 

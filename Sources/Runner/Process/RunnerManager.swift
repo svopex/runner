@@ -53,6 +53,11 @@ final class RunnerManager {
         runners.filter { $0.status.canStop }.forEach { $0.stop() }
     }
 
+    // Restartuje všechny běžící aplikace (včetně spuštěných mimo Runner), zastavené nechá být
+    func restartAll() {
+        runners.filter { $0.status.canStop }.forEach { $0.restart() }
+    }
+
     // Zastaví aplikace spuštěné Runnerem a počká na jejich konec (při ukončení Runneru)
     func stopManagedAndWait() async {
         let timeout = AppSettings.stopTimeout

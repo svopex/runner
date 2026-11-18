@@ -143,6 +143,13 @@ struct MainWindowView: View {
             .help("Zastavit všechny běžící aplikace")
 
             Button {
+                manager.restartAll()
+            } label: {
+                Label("Restartovat vše", systemImage: "arrow.clockwise")
+            }
+            .help("Restartovat všechny běžící aplikace")
+
+            Button {
                 editorRequest = EditorRequest(app: AppDefinition(name: "", path: ""), isNew: true)
             } label: {
                 Label("Přidat aplikaci", systemImage: "plus")

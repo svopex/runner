@@ -38,12 +38,13 @@ Testy: `swift test`.
 ### Horní lišta
 Ikona ▶︎ (s počtem běžících aplikací). Menu obsahuje podmenu pro každou aplikaci
 (Spustit / Zastavit / Restartovat / Otevřít v prohlížeči), dále Spustit vše, Zastavit vše,
-otevření hlavního okna, nastavení a ukončení Runneru.
+Restartovat vše (jen běžící aplikace), otevření hlavního okna, nastavení a ukončení Runneru.
 
 ### Hlavní okno
 - Seznam aplikací se stavem, portem, PID a dobou běhu.
 - Tlačítka v řádku: ▶︎/■ spustit/zastavit, ↻ restart, otevřít webové rozhraní, ✎ upravit.
-- Nástrojová lišta: Spustit vše, Zastavit vše, **+ Přidat aplikaci**, Nastavení.
+- Nástrojová lišta: Spustit vše, Zastavit vše, Restartovat vše (jen běžící aplikace),
+  **+ Přidat aplikaci**, Nastavení.
 - Pořadí aplikací lze měnit tažením, kontextové menu nabízí úpravu, zobrazení složky,
   otevření logu v Konzoli a odstranění (jen u neběžící aplikace).
 - Dolní panel ukazuje log vybrané aplikace (konec souboru, obnovuje se každou sekundu).
