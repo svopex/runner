@@ -147,3 +147,7 @@ Sources/Runner/
   Views/                      SwiftUI pohledy (okno, řádek, log, editor, nastavení, menu)
 Tests/RunnerTests/            testy jádra (konfigurace, procesy, převzetí, porty, logy)
 ```
+
+## Licence
+
+Projekt je šířen pod licencí [Apache License 2.0](LICENSE).
