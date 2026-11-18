@@ -159,6 +159,25 @@ final class RunnerTests: XCTestCase {
         XCTAssertTrue(waitUntil(timeout: 5) { kill(childPID, 0) != 0 })
     }
 
+    // Spuštěná aplikace musí být „odpovědným procesem“ sama za sebe, jinak ji macOS
+    // ukončí spolu s Runnerem (Dock → Ukončit práci na pozadí, vynucené ukončení)
+    func testSpawnedProcessIsResponsibleForItself() throws {
+        typealias ResponsibleFunction = @convention(c) (pid_t) -> pid_t
+        let responsiblePID = try XCTUnwrap(
+            ProcessSpawner.systemSymbol("responsibility_get_pid_responsible_for_pid", as: ResponsibleFunction.self),
+            "Systém neposkytuje responsibility_get_pid_responsible_for_pid"
+        )
+
+        let app = try makeApp(script: "sleep 30")
+        let pid = try ProcessSpawner.spawn(app: app, logURL: tempDir.appendingPathComponent("out.log"))
+        defer {
+            ProcessSpawner.signalGroup(pid, SIGKILL)
+            waitpid(pid, nil, 0)
+        }
+
+        XCTAssertEqual(responsiblePID(pid), pid)
+    }
+
     // Celý životní cyklus přes AppRunner: start → běží → stop → zastaveno
     @MainActor
     func testRunnerLifecycleWithoutPort() async throws {

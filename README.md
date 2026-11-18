@@ -103,6 +103,10 @@ U převzaté aplikace nelze zjistit návratový kód – nečekaný konec se zob
   o `/opt/homebrew/bin` a `/usr/local/bin`; nastaví se `PYTHONUNBUFFERED=1`.
 - Každá aplikace běží ve vlastní skupině procesů (`posix_spawn` + `POSIX_SPAWN_SETPGROUP`).
   Zastavení posílá SIGTERM celé skupině, takže skončí i podřízené procesy.
+- Aplikace se spouští se zřeknutím odpovědnosti (`responsibility_spawnattrs_setdisclaim`,
+  stejně jako u Terminálu). macOS je tak nepřipisuje Runneru: po ukončení Runneru s volbou
+  „Nechat běžet“ se v Docku neobjeví jako jeho práce na pozadí a volba „Ukončit práci
+  na pozadí“ ani vynucené ukončení Runneru je neukončí.
 - Výstup (stdout i stderr) jde přímo do `~/Library/Logs/Runner/<název>_<id>.log`.
   Aplikace tak může běžet dál i po ukončení Runneru. Log se při velikosti nad 5 MB
   při dalším startu odsune do `.log.1`.

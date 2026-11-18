@@ -56,6 +56,19 @@ enum ProcessSpawner {
         return env
     }
 
+    // Neveřejná funkce libSystem responsibility_spawnattrs_setdisclaim (používají ji
+    // Terminál, iTerm, VS Code): spuštěný proces se zřekne odpovědnosti rodiče.
+    // Načítáme ji dynamicky – pokud v systému chybí, aplikace se spustí i bez ní.
+    private typealias DisclaimFunction = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+    private static let disclaimResponsibility = systemSymbol("responsibility_spawnattrs_setdisclaim", as: DisclaimFunction.self)
+
+    // Najde funkci v načtených systémových knihovnách a přetypuje ji na zadaný typ.
+    // RTLD_DEFAULT (hledání ve všech knihovnách) Swift neimportuje – na Darwinu je to (void *)-2.
+    static func systemSymbol<Function>(_ name: String, as type: Function.Type) -> Function? {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else { return nil }
+        return unsafeBitCast(symbol, to: type)
+    }
+
     // Spustí skript aplikace ve vlastní skupině procesů, stdout i stderr přesměruje
     // do logu (append), stdin na /dev/null. Vrací PID, který je zároveň PGID.
     static func spawn(app: AppDefinition, logURL: URL) throws -> pid_t {
@@ -89,6 +102,11 @@ enum ProcessSpawner {
         var emptyMask = sigset_t()
         sigemptyset(&emptyMask)
         posix_spawnattr_setsigmask(&attributes, &emptyMask)
+
+        // Aplikace bude „odpovědným procesem“ sama za sebe. Jinak by ji macOS
+        // připisoval Runneru a vynucené ukončení Runneru (Dock, Vynutit ukončení,
+        // Monitor aktivity) by ukončilo i ji.
+        _ = disclaimResponsibility?(&attributes, 1)
 
         // Převod argumentů a prostředí na pole C řetězců zakončená NULL
         var cArguments: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
