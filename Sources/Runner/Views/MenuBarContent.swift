@@ -19,7 +19,8 @@ struct MenuBarLabel: View {
 // Obsah menu v horní liště: podmenu pro každou aplikaci a hromadné akce
 struct MenuBarContent: View {
     @Environment(RunnerManager.self) private var manager
-    @Environment(\.openWindow) private var openWindow
+    // Zobrazení hlavního okna (sdílené s kliknutím na ikonu v Docku, viz AppDelegate)
+    let showMainWindow: () -> Void
 
     var body: some View {
         ForEach(manager.runners) { runner in
@@ -67,11 +68,5 @@ struct MenuBarContent: View {
             Button("Otevřít v prohlížeči") { NSWorkspace.shared.open(url) }
                 .disabled(!runner.portOpen)
         }
-    }
-
-    // Okno aplikace v horní liště se samo do popředí nedostane – aktivujeme ji
-    private func showMainWindow() {
-        openWindow(id: MainWindowView.windowID)
-        NSApp.activate()
     }
 }

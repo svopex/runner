@@ -29,14 +29,16 @@ struct RunnerApp: App {
         Window("Runner", id: MainWindowView.windowID) {
             MainWindowView()
                 .environment(appDelegate.manager)
+                .capturingOpenWindow { appDelegate.openWindowAction = $0 }
         }
         .defaultSize(width: 860, height: 600)
 
         MenuBarExtra {
-            MenuBarContent()
+            MenuBarContent(showMainWindow: appDelegate.showMainWindow)
                 .environment(appDelegate.manager)
         } label: {
             MenuBarLabel(manager: appDelegate.manager)
+                .capturingOpenWindow { appDelegate.openWindowAction = $0 }
         }
     }
 }
@@ -45,6 +47,10 @@ struct RunnerApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let manager: RunnerManager
+
+    // Akce SwiftUI pro otevření okna; delegát ji z prostředí sám nezíská, proto ji
+    // zachytí ikona v horní liště (je vidět vždy) a hlavní okno
+    var openWindowAction: OpenWindowAction?
 
     override init() {
         manager = RunnerManager(
@@ -73,9 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Po spuštění při přihlášení nechceme otevírat okno – stačí ikona v horní liště
         if launchedAsLoginItem() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NSApp.windows
-                    .filter { $0.identifier?.rawValue.hasPrefix(MainWindowView.windowID) == true }
-                    .forEach { $0.close() }
+                self.mainWindows.forEach { $0.close() }
             }
         }
     }
@@ -83,6 +87,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Zavřením okna aplikace nekončí – dál běží v horní liště
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    // Kliknutí na ikonu v Docku (nebo nové spuštění z Finderu) u běžícího Runneru
+    // otevře hlavní okno. Vlastní obsluha je nutná, protože SwiftUI okno scény Window
+    // samo znovu neotevře; vracíme false, aby AppKit už nic dalšího nedělal.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showMainWindow()
+        return false
+    }
+
+    // Zobrazí hlavní okno a aktivuje Runner; jediná cesta pro menu v horní liště i Dock.
+    // Bez zachycené akce openWindow aspoň vrátí do popředí existující okno.
+    func showMainWindow() {
+        if let openWindowAction {
+            openWindowAction(id: MainWindowView.windowID)
+        } else {
+            mainWindows.first?.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate()
+    }
+
+    // Okna scény hlavního okna (SwiftUI jim dává identifikátor začínající ID scény)
+    private var mainWindows: [NSWindow] {
+        NSApp.windows.filter { $0.identifier?.rawValue.hasPrefix(MainWindowView.windowID) == true }
     }
 
     // Před ukončením Runneru rozhodneme, co s aplikacemi, které spustil
@@ -138,5 +166,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let event = NSAppleEventManager.shared().currentAppleEvent,
               event.eventID == kAEOpenApplication else { return false }
         return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
+}
+
+// Předá akci openWindow z prostředí SwiftUI ven (do delegáta aplikace)
+private struct OpenWindowCapture: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+    let store: (OpenWindowAction) -> Void
+
+    func body(content: Content) -> some View {
+        content.onAppear { store(openWindow) }
+    }
+}
+
+extension View {
+    // Zachytí akci openWindow při zobrazení pohledu
+    func capturingOpenWindow(_ store: @escaping (OpenWindowAction) -> Void) -> some View {
+        modifier(OpenWindowCapture(store: store))
     }
 }

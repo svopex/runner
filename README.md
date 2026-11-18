@@ -48,6 +48,8 @@ otevření hlavního okna, nastavení a ukončení Runneru.
   otevření logu v Konzoli a odstranění (jen u neběžící aplikace).
 - Dolní panel ukazuje log vybrané aplikace (konec souboru, obnovuje se každou sekundu).
 - Při otevřeném okně je Runner v Docku; po zavření okna zůstane jen v horní liště.
+- Kliknutí na ikonu Runneru v Docku (nebo jeho nové spuštění z Finderu či Launchpadu)
+  otevře hlavní okno a přenese ho do popředí.
 
 ### Stavy aplikací
 | Stav | Význam |
